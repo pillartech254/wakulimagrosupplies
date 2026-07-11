@@ -3591,7 +3591,7 @@ to{opacity:1;}}
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('printInvoiceModal')">Cancel</button>
-      <button class="btn btn-primary" onclick="_doPrintInvoice()">🖨 Print Invoice</button>
+      <button class="btn btn-primary" onclick="_doPrintPrePaymentInvoice()">🖨 Print Invoice</button>
     </div>
   </div>
 </div>
@@ -5035,41 +5035,66 @@ function fmtDate(iso){ if(!iso) return '—'; const d=new Date(iso); return d.to
 function esc(s){ const d=document.createElement('div'); d.textContent=String(s||''); return d.innerHTML; }
 
 // ── Trusted time — Nairobi GMT+3, verified from internet before every transaction ──
-const _TIME_TOLERANCE_MS  = 90 * 1000;   // allow 90 sec clock drift
-const _SYNC_STALE_MS      = 90 * 1000;   // re-fetch if last sync > 90 sec old
-let _trustedTimeOK   = false;  // last sync succeeded AND clocks matched
+const _TIME_TOLERANCE_MS  = 5 * 60 * 1000;   // HARD block threshold — allow 5 min clock drift
+                                              // (Windows auto-sync only runs ~weekly by default,
+                                              // so a few minutes of drift is normal, not tampering)
+const _TIME_SOFT_WARN_MS  = 2 * 60 * 1000;   // SOFT warning threshold — nudge, don't block
+const _SOFT_WARN_COOLDOWN_MS = 10 * 60 * 1000; // don't repeat the soft nudge more than once per 10 min
+const _SYNC_STALE_MS      = 5 * 60 * 1000;   // re-fetch if last sync > 5 min old
+let _trustedTimeOK   = false;  // last sync succeeded AND clocks matched (within HARD tolerance)
 let _trustedTimeAt   = 0;      // local Date.now() at last successful sync
 let _trustedTimeReal = 0;      // real internet ms at last successful sync
 let _lastTimeSync    = 0;      // local Date.now() of last sync attempt
 let _timeSyncBusy    = false;
+let _lastSoftWarnAt  = 0;      // local Date.now() of last soft-warning toast shown
 
-const _TIME_APIS = [
-  'https://worldtimeapi.org/api/timezone/Africa/Nairobi',
-  'https://timeapi.io/api/Time/current/zone?timeZone=Africa%2FNairobi',
-];
+// worldtimeapi.org was permanently shut down ("sunset") in 2025, so it's dropped —
+// every sync used to waste up to 6s timing out on it before falling through.
+// Two independent sources are used instead:
+//   1) timeapi.io — cache-busted, and parsed from its numeric year/month/day/hour/minute/seconds
+//      fields (NOT the "dateTime" string) so we never depend on new Date(str) guessing a timezone.
+//   2) The HTTP "Date" response header from GitHub's API — this header is defined by RFC 7231 to
+//      always be UTC, has no timezone ambiguity at all, and acts as a robust fallback if timeapi.io
+//      is ever down or edge-cached.
+async function _fetchRealTime_timeapi(){
+  const t0 = Date.now();
+  // cache-busting query param defeats any CDN edge caching that can serve a stale reading
+  const r = await fetch(`https://timeapi.io/api/Time/current/zone?timeZone=Africa%2FNairobi&_=${t0}`,
+    {cache:'no-store', signal: AbortSignal.timeout(6000)});
+  if(!r.ok) throw new Error('timeapi.io bad status '+r.status);
+  const t1 = Date.now();
+  const d = await r.json();
+  if(d.year == null || d.month == null || d.day == null) throw new Error('timeapi.io missing fields');
+  // Build the UTC instant directly from the numeric fields (Nairobi is fixed UTC+3, no DST)
+  // instead of parsing d.dateTime, which is a timezone-less string that new Date() would
+  // otherwise silently reinterpret using the browser's OS timezone.
+  const realMs = Date.UTC(d.year, d.month - 1, d.day, d.hour, d.minute, d.seconds || 0) - (3 * 60 * 60 * 1000);
+  return { realMs, localMs: Math.round((t0 + t1) / 2) };
+}
+async function _fetchRealTime_httpHeader(){
+  const t0 = Date.now();
+  const r = await fetch(`https://api.github.com/zen?_=${t0}`, {cache:'no-store', signal: AbortSignal.timeout(6000)});
+  const t1 = Date.now();
+  const hdr = r.headers.get('date'); // RFC 7231 "Date" header — always GMT/UTC, unambiguous
+  if(!hdr) throw new Error('no Date header');
+  const realMs = new Date(hdr).getTime();
+  return { realMs, localMs: Math.round((t0 + t1) / 2) };
+}
+const _TIME_SOURCES = [_fetchRealTime_timeapi, _fetchRealTime_httpHeader];
 
 async function syncTrustedTime(){
   if(_timeSyncBusy) return _trustedTimeOK;
   _timeSyncBusy = true;
   let success = false;
 
-  for(const url of _TIME_APIS){
+  for(const fetchSource of _TIME_SOURCES){
     try{
-      const t0 = Date.now();
-      const r = await fetch(url, {cache:'no-store', signal: AbortSignal.timeout(6000)});
-      if(!r.ok) continue;
-      const t1 = Date.now();
-      const data = await r.json();
-      const dtStr = data.datetime || data.dateTime;
-      if(!dtStr) continue;
-
-      const realMs  = new Date(dtStr).getTime();
-      const localMs = Math.round((t0 + t1) / 2);   // mid-point to reduce latency skew
-      const diff    = realMs - localMs;             // how far PC clock is from real
+      const { realMs, localMs } = await fetchSource();
+      const diff = realMs - localMs;             // how far PC clock is from real
 
       _trustedTimeReal = realMs;
-      _trustedTimeAt   = t1;
-      _lastTimeSync    = t1;
+      _trustedTimeAt   = localMs;   // anchor drift calc to the same midpoint used above
+      _lastTimeSync    = Date.now();
 
       if(Math.abs(diff) > _TIME_TOLERANCE_MS){
         // PC clock is wrong — record real time but flag as untrusted
@@ -5078,10 +5103,19 @@ async function syncTrustedTime(){
       } else {
         _trustedTimeOK = true;
         _hideTimeBanner();
+        if(Math.abs(diff) > _TIME_SOFT_WARN_MS){
+          // Within the allowed HARD tolerance, but drifting — nudge without blocking the sale.
+          const now = Date.now();
+          if(now - _lastSoftWarnAt > _SOFT_WARN_COOLDOWN_MS){
+            _lastSoftWarnAt = now;
+            const mins = (Math.abs(diff)/60000).toFixed(1);
+            toast(`🕒 PC clock is drifting (${mins} min off) — worth a "Sync now" in Windows Date & Time settings soon.`,'warn');
+          }
+        }
       }
       success = true;
       break;
-    } catch(e){ /* try next API */ }
+    } catch(e){ /* try next source */ }
   }
 
   if(!success){
@@ -5137,7 +5171,8 @@ function _showTimeBanner(realMs, localMs, diff, offline){
     el.innerHTML = '🌐 <span>Cannot reach time server — <b>transactions are blocked</b> until internet is restored. Please check your connection.</span>';
   } else {
     const diffMin = (Math.abs(diff)/60000).toFixed(1);
-    const direction = diff < 0 ? 'behind' : 'ahead of';
+    // diff = realMs - localMs. If diff > 0, real time is AHEAD of the PC clock, i.e. PC is behind.
+    const direction = diff > 0 ? 'behind' : 'ahead of';
     const real = new Date(realMs).toLocaleString('en-KE',{timeZone:'Africa/Nairobi',hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short',year:'numeric'});
     el.innerHTML = `⚠️ <span>Clock mismatch! PC is <b>${diffMin} min ${direction}</b> real Nairobi time (<b>${real}</b>). `
       +`<b>Transactions blocked.</b> Sync your PC clock (Settings → Date & Time → Sync now) then refresh this page.</span>`;
@@ -6919,7 +6954,7 @@ function buildReceiptHTML(tx){
     ${generateBarcodeSVG(receiptId)}
     <div class="rp-line"></div>
     <div class="rp-footer">${footer}</div>
-    <div class="rp-powered">Powered by PillarPOS<br>📞 0738 522 942</div>
+    <div class="rp-powered">Powered by PillarPOS<br>0738 522 942</div>
     `,
     receiptId, bizName
   };
@@ -15606,7 +15641,7 @@ function _doPrintInvoice(){
   <div class="inv-header">
     <div>
       <div class="inv-biz">${bizName}</div>
-      ${bizPhone?`<div style="color:#666;font-size:12px;margin-top:4px;">📞 ${bizPhone}</div>`:''}
+      ${bizPhone?`<div style="color:#666;font-size:12px;margin-top:4px;"> ${bizPhone}</div>`:''}
       ${bizAddr?`<div style="color:#666;font-size:12px;">${bizAddr}</div>`:''}
     </div>
     <div>
@@ -16175,7 +16210,7 @@ function openPrintInvoiceModal(){
   setTimeout(()=>document.getElementById('invCustomer')?.focus(),100);
 }
 
-function _doPrintInvoice(){
+function _doPrintPrePaymentInvoice(){
   const customer=document.getElementById('invCustomer').value.trim();
   if(!customer){ toast('Customer name is required','err'); return; }
   closeModal('printInvoiceModal');
