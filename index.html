@@ -5027,7 +5027,32 @@ function setBranchScope(branchId){
 // HELPERS
 // ============================================================
 function ls(key){ try{ return JSON.parse(localStorage.getItem(key)||'null'); }catch(e){ return null; } }
-function lsSave(key,val){ localStorage.setItem(key, JSON.stringify(val)); }
+function lsSave(key,val){
+  try{
+    localStorage.setItem(key, JSON.stringify(val));
+    return true;
+  }catch(e){
+    if(e && (e.name==='QuotaExceededError' || e.code===22 || e.code===1014)){
+      console.warn('lsSave: storage quota exceeded for key "'+key+'". Attempting recovery.');
+      // Recovery: if this is the backups store, drop the oldest half and retry once.
+      if(key===LS.backups && Array.isArray(val) && val.length>1){
+        try{
+          const trimmed = val.slice(0, Math.max(1, Math.floor(val.length/2)));
+          localStorage.setItem(key, JSON.stringify(trimmed));
+          console.warn('lsSave: recovered by trimming "'+key+'" to '+trimmed.length+' entries.');
+          return true;
+        }catch(e2){
+          // Still failing — give up on this save but don't crash the caller.
+          console.error('lsSave: recovery failed for "'+key+'".', e2);
+          return false;
+        }
+      }
+      return false;
+    }
+    console.error('lsSave: unexpected error saving "'+key+'".', e);
+    return false;
+  }
+}
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function kes(n){ return 'KES '+Number(n||0).toLocaleString('en-KE',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtDate(iso){ if(!iso) return '—'; const d=new Date(iso); return d.toLocaleString('en-KE',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
@@ -5541,8 +5566,20 @@ async function doLogin(){
 
   // Always re-enable button when done
   if(loginBtn){ loginBtn.textContent='🔄 Signing in…'; loginBtn.disabled=true; }
+  // Watchdog: if anything in the login chain hangs for any reason (network,
+  // future bug, etc.) force the UI back to a usable state after 12s instead
+  // of leaving the cashier staring at a frozen "Signing in…" screen forever.
+  let _watchdogFired = false;
+  const _watchdog = setTimeout(()=>{
+    _watchdogFired = true;
+    if(loginBtn){ loginBtn.textContent='Sign In →'; loginBtn.disabled=false; }
+    showErr(errEl, 'Sign-in is taking too long. Check your internet connection and try again.');
+  }, 12000);
   try{ await _doLoginInner(username, password, errEl, loginBtn); }
-  finally{ if(loginBtn){ loginBtn.textContent='Sign In →'; loginBtn.disabled=false; } }
+  finally{
+    clearTimeout(_watchdog);
+    if(!_watchdogFired && loginBtn){ loginBtn.textContent='Sign In →'; loginBtn.disabled=false; }
+  }
 }
 
 async function _doLoginInner(username, password, errEl, loginBtn){
@@ -5726,7 +5763,7 @@ async function _doLoginInner(username, password, errEl, loginBtn){
   if(!isSuperAdmin && !checkSubscriptionOnLogin()) return;
 
   const cfg = ls(LS.backupCfg)||{};
-  if(cfg.onLogin) triggerBackup('login');
+  if(cfg.onLogin){ try{ triggerBackup('login'); }catch(e){ console.error('Login backup failed (non-blocking):', e); } }
 
   if(isSuperAdmin || isAdmin){
     await showBranchPickerModal();
@@ -10483,7 +10520,14 @@ async function sbFetch(table, method='GET', body=null, query='', _silent=false){
     'Prefer': method==='POST' ? 'resolution=merge-duplicates,return=minimal' : 'return=minimal',
   };
   try{
-    const res = await fetch(endpoint, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    // Hard timeout — a slow/dead Supabase project (e.g. free-tier cold start,
+    // flaky network, firewall interception) must never hang the caller forever.
+    // Login and other flows await this directly, so without a timeout the UI
+    // appears permanently "stuck" with no error shown.
+    const res = await fetch(endpoint, {
+      method, headers, body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(8000)
+    });
     if(!res.ok){
       const errText = await res.text();
       console.warn('Supabase',method,table,res.status,errText);
@@ -10496,7 +10540,15 @@ async function sbFetch(table, method='GET', body=null, query='', _silent=false){
     const text = await res.text();
     if(!text || text === '') return method === 'GET' ? [] : true;
     try{ return JSON.parse(text); } catch(e){ return true; }
-  } catch(e){ console.warn('Supabase error:', e); return null; }
+  } catch(e){
+    if(e.name === 'TimeoutError' || e.name === 'AbortError'){
+      console.warn('Supabase timeout (8s):', table, method);
+      if(!_silent) toast('⚠️ Cloud is slow to respond — using local data', 'warn');
+    } else {
+      console.warn('Supabase error:', e);
+    }
+    return null;
+  }
 }
 
 // ── Push helpers ────────────────────────────────────────────
@@ -11691,17 +11743,27 @@ function gatherBackupData(){
 }
 
 function triggerBackup(trigger){
-  const data=gatherBackupData();
-  const cfg=ls(LS.backupCfg)||{};
-  const maxBackups=cfg.maxBackups||10;
+  try{
+    const data=gatherBackupData();
+    const cfg=ls(LS.backupCfg)||{};
+    // Cap maxBackups defensively — large transaction histories make each
+    // backup heavy, so even a "small" count can blow the localStorage quota.
+    const maxBackups=Math.min(cfg.maxBackups||10, 10);
 
-  const backups=ls(LS.backups)||[];
-  backups.unshift({ id:uid(), trigger, timestamp:data.timestamp, size:JSON.stringify(data).length, data });
-  // Trim
-  while(backups.length>maxBackups) backups.pop();
-  lsSave(LS.backups, backups);
+    const backups=ls(LS.backups)||[];
+    backups.unshift({ id:uid(), trigger, timestamp:data.timestamp, size:JSON.stringify(data).length, data });
+    // Trim
+    while(backups.length>maxBackups) backups.pop();
+    const ok = lsSave(LS.backups, backups);
 
-  if(trigger==='manual') toast('Backup saved','ok');
+    if(trigger==='manual'){
+      if(ok) toast('Backup saved','ok');
+      else toast('Backup skipped — device storage is full. Old backups were trimmed; try again.','warn');
+    }
+  }catch(e){
+    // A backup failure must NEVER break the calling flow (login, logout, etc).
+    console.error('triggerBackup failed for trigger "'+trigger+'":', e);
+  }
 }
 
 function saveBackupSettings(){
