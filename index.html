@@ -5121,23 +5121,11 @@ async function syncTrustedTime(){
       _trustedTimeAt   = localMs;   // anchor drift calc to the same midpoint used above
       _lastTimeSync    = Date.now();
 
-      if(Math.abs(diff) > _TIME_TOLERANCE_MS){
-        // PC clock is wrong — record real time but flag as untrusted
-        _trustedTimeOK = false;
-        _showTimeBanner(realMs, localMs, diff);
-      } else {
-        _trustedTimeOK = true;
-        _hideTimeBanner();
-        if(Math.abs(diff) > _TIME_SOFT_WARN_MS){
-          // Within the allowed HARD tolerance, but drifting — nudge without blocking the sale.
-          const now = Date.now();
-          if(now - _lastSoftWarnAt > _SOFT_WARN_COOLDOWN_MS){
-            _lastSoftWarnAt = now;
-            const mins = (Math.abs(diff)/60000).toFixed(1);
-            toast(`🕒 PC clock is drifting (${mins} min off) — worth a "Sync now" in Windows Date & Time settings soon.`,'warn');
-          }
-        }
-      }
+      // Regardless of drift size, we trust the internet-derived time and correct for
+      // it silently — trustedNow() = realMs + (Date.now() - localMs) at call time.
+      // No banners, no toasts, no blocking: the cashier never needs to know or care
+      // what the PC clock says.
+      _trustedTimeOK = true;
       success = true;
       break;
     } catch(e){ /* try next source */ }
@@ -5166,48 +5154,18 @@ function trustedNow(){
 function trustedISO(){ return trustedNow().toISOString(); }
 function today(){ return trustedNow().toISOString().slice(0,10); }
 
-// Call before ANY transaction — always fetches live internet time; blocks if offline/mismatch
+// Kept as a no-op for backward compatibility with any other call sites —
+// transactions are never blocked on clock/time checks anymore. See syncTrustedTime().
 async function checkTimeBeforeTransaction(){
-  // Always fetch fresh — no caching, no stale window
-  await syncTrustedTime();
-  if(!_trustedTimeOK){
-    if(!_trustedTimeAt){
-      toast('🌐 No internet connection. Please connect to the internet to process transactions.','err');
-    } else {
-      const real = new Date(_trustedTimeReal).toLocaleString('en-KE',{timeZone:'Africa/Nairobi',hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short',year:'numeric'});
-      toast(`⚠️ Clock mismatch! Real Nairobi time is ${real}. Please sync your PC clock and try again.`,'err');
-    }
-    return false;
-  }
   return true;
 }
 
-function _showTimeBanner(realMs, localMs, diff, offline){
-  let el = document.getElementById('_timeMismatchBanner');
-  if(!el){
-    el = document.createElement('div');
-    el.id = '_timeMismatchBanner';
-    el.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;z-index:999999;'
-      +'background:#dc2626;color:#fff;padding:10px 20px;font-size:13px;font-weight:600;'
-      +'display:flex;align-items:center;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.3);';
-    document.body.appendChild(el);
-  }
-  if(offline){
-    el.innerHTML = '🌐 <span>Cannot reach time server — <b>transactions are blocked</b> until internet is restored. Please check your connection.</span>';
-  } else {
-    const diffMin = (Math.abs(diff)/60000).toFixed(1);
-    // diff = realMs - localMs. If diff > 0, real time is AHEAD of the PC clock, i.e. PC is behind.
-    const direction = diff > 0 ? 'behind' : 'ahead of';
-    const real = new Date(realMs).toLocaleString('en-KE',{timeZone:'Africa/Nairobi',hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short',year:'numeric'});
-    el.innerHTML = `⚠️ <span>Clock mismatch! PC is <b>${diffMin} min ${direction}</b> real Nairobi time (<b>${real}</b>). `
-      +`<b>Transactions blocked.</b> Sync your PC clock (Settings → Date & Time → Sync now) then refresh this page.</span>`;
-  }
-  el.style.display = 'flex';
-  document.getElementById('appShell')?.style.setProperty('margin-top', el.offsetHeight + 'px');
-}
+// Banner intentionally removed — clock drift is corrected silently via trustedNow(),
+// never surfaced to the cashier, and never blocks a sale.
+function _showTimeBanner(){ /* no-op — see note above */ }
 function _hideTimeBanner(){
   const el = document.getElementById('_timeMismatchBanner');
-  if(el) el.style.display = 'none';
+  if(el) el.remove();
   document.getElementById('appShell')?.style.removeProperty('margin-top');
 }
 
@@ -6766,9 +6724,10 @@ function selectPayMethod(method){
 async function completeSale(){
   if(!APP.cart.length){ toast('Cart is empty','warn'); return; }
 
-  // ── Hard block: verify internet time before every transaction ──
-  const timeOK = await checkTimeBeforeTransaction();
-  if(!timeOK) return;
+  // Time sync runs silently in the background (see syncTrustedTime / trustedNow) —
+  // sales are never blocked on it. Timestamps are computed from real internet time
+  // (with drift-correction) regardless of what the PC clock says, so there's nothing
+  // to gate here.
 
   const {subtotal,disc,total}=getCartTotal();
 
