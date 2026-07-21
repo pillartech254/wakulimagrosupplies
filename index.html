@@ -3,7 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PillarPOS — Wakulima Agro Supplies</title>
+<script>
+// Marks the document as running inside the native Android app (Capacitor
+// injects window.Capacitor before this page's own scripts run, so this is
+// safe to check synchronously) as early as possible — before the CSS below
+// ever gets a chance to paint a single animation frame — so the
+// html.native-app rule further down can kill every animation/transition
+// for the packaged app without a flash of motion first.
+if(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()){
+  document.documentElement.classList.add('native-app');
+}
+</script>
+<title>PillarPOS — Sell Smart | Grow Faster</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0b1230">
 <link rel="icon" href="/icons/icon-192.png">
@@ -12,6 +23,25 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PillarPOS">
 <style>
+
+/* ── NATIVE ANDROID APP: NO ANIMATION, ANYWHERE ──────────────────────
+   Every animation/transition in this file — hover effects, fades, the
+   login card's old float, focus glows, toast slides, all of it — is
+   collapsed to instant with duration:0 rather than animation:none. That
+   distinction matters: several elements (e.g. the splash/login intro
+   fades) start at opacity:0 and rely on their *animation* to reach
+   opacity:1; turning animation off entirely would leave them stuck
+   invisible at their start state, whereas duration:0 just makes them jump
+   straight to their end state instantly — exactly "appears, doesn't move"
+   rather than "never appears". Scoped to html.native-app only (set by the
+   inline script in <head>), so the web/desktop version is untouched. */
+html.native-app *, html.native-app *::before, html.native-app *::after{
+  animation-duration:0s !important;
+  animation-delay:0s !important;
+  transition-duration:0s !important;
+  transition-delay:0s !important;
+  scroll-behavior:auto !important;
+}
 
 /* ── SUPERMARKET THEME ── */
 [data-theme="supermarket"]{
@@ -195,8 +225,19 @@ body.role-cashier .loyalty-admin-action{ display:none !important; }
   padding-top: 20px !important;
 }
 </style>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- Both of these used to block the browser from parsing the rest of this
+     16,000-line document until they finished downloading — on a real
+     mobile connection (unlike fast local testing) that's a very plausible
+     cause of "loading half content": the page genuinely hadn't parsed past
+     this point yet. The font link now loads as a non-blocking preload and
+     swaps itself in once ready (--font already falls back to plain
+     sans-serif in the meantime, so nothing is unstyled); Chart.js now
+     defers like qz-tray already did, since every new Chart(...) call in
+     this file only happens inside on-demand render functions, never at
+     parse time, so deferring it is safe. -->
+<link rel="preload" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet"></noscript>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.4/qz-tray.min.js" defer></script>
 <style>
 /* ============================================================
@@ -236,6 +277,44 @@ body{font-family:var(--font);background:var(--bg);color:var(--txt);font-size:14p
 ::-webkit-scrollbar-thumb{background:var(--pm);border-radius:99px;}
 ::-webkit-scrollbar-thumb:hover{background:var(--p);}
 *{scrollbar-width:thin;scrollbar-color:var(--pm) var(--inp);}
+
+/* ============================================================
+   CONNECTIVITY GATE
+   ============================================================ */
+#offlineGate{
+  position:fixed;inset:0;z-index:3000;
+  display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(120% 90% at 50% 0%, #101a44 0%, #0b1230 46%, #080b1f 100%);
+  padding:24px;
+}
+.offline-card{max-width:380px;width:100%;text-align:center;color:#fff;}
+.offline-icon{
+  width:72px;height:72px;border-radius:20px;margin:0 auto 20px;
+  display:flex;align-items:center;justify-content:center;font-size:30px;
+  background:linear-gradient(135deg,#2563eb,#22d3ee);
+  box-shadow:0 12px 32px rgba(37,99,235,.35);
+}
+#offlineGate.offline .offline-icon{
+  background:linear-gradient(135deg,#ef4444,#b91c1c);
+  box-shadow:0 12px 32px rgba(220,38,38,.35);
+}
+.offline-spinner{
+  width:26px;height:26px;border-radius:50%;
+  border:3px solid rgba(255,255,255,.3);border-top-color:#fff;
+  animation:offlineSpin .8s linear infinite;
+}
+@keyframes offlineSpin{ to{ transform:rotate(360deg); } }
+.offline-title{font-size:20px;font-weight:800;margin-bottom:10px;}
+.offline-msg{font-size:14px;color:#aab2da;line-height:1.6;margin-bottom:22px;}
+.offline-retry{
+  display:none;
+  background:linear-gradient(90deg,#2563eb,#22d3ee);
+  color:#fff;border:none;border-radius:12px;padding:13px 28px;
+  font-size:14.5px;font-weight:700;cursor:pointer;width:100%;
+}
+.offline-retry:disabled{opacity:.6;cursor:wait;}
+#offlineGate.offline .offline-retry{display:block;}
+.offline-status{margin-top:14px;font-size:12px;color:#6b74a3;min-height:16px;}
 
 /* ============================================================
    LOGIN
@@ -424,17 +503,21 @@ body{font-family:var(--font);background:var(--bg);color:var(--txt);font-size:14p
 }
 @keyframes pBgPulse{0%,100%{opacity:0.045;transform:translateX(10%) scale(1);}50%{opacity:0.065;transform:translateX(10%) scale(1.02);}}
 .login-card{
-  background:rgba(255,255,255,0.05);
+  /* Static and opaque on purpose: this used to float (cardFloat) behind a
+     24px backdrop-filter blur, recomputed every frame forever. Desktop GPUs
+     handled that fine; phone GPUs/WebViews visibly stuttered and flashed
+     under it, worst right when a field was focused and the keyboard added
+     more compositing work on top. Removed everywhere rather than just
+     tuned down for mobile — a login form has no business moving while
+     someone is trying to type into it, on any device. */
+  background:rgba(15,20,40,0.92);
   border:1px solid rgba(255,255,255,0.11);
   border-radius:24px;
   box-shadow:0 2px 0 rgba(255,255,255,0.07) inset,0 32px 64px rgba(0,0,0,0.5),0 8px 24px rgba(0,0,0,0.3);
-  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
   padding:40px 36px;margin:20px;
   display:flex;flex-direction:column;justify-content:center;
   position:relative;z-index:1;
-  animation:cardFloat 6s ease-in-out infinite;
 }
-@keyframes cardFloat{0%,100%{transform:translateY(0);}50%{transform:translateY(-6px);}}
 .login-brand{text-align:center;margin-bottom:30px;}
 .login-logo-svg{
   display:inline-block;margin-bottom:16px;
@@ -1671,10 +1754,70 @@ to{opacity:1;}}
   .login-wrap{
     flex:1;width:100%;min-height:100vh;
     box-shadow:none;
+    /* Flat single colour instead of the desktop's 3-stop gradient — one
+       native-app-style background, not a "designed" backdrop. */
+    background:#0b1220;
+  }
+  /* The desktop login leans on glow blobs, a giant translucent background
+     letterform, and a heavy multi-layer card shadow to feel "designed" and
+     3D. None of that reads as a mobile app — it reads as a desktop page
+     squeezed onto a phone, and every one of those layers is extra paint
+     work for no functional benefit. Stripped entirely here in favour of a
+     plain, flat, fast login screen. */
+  .login-wrap::before, .login-wrap::after, .login-p-bg{ display:none; }
+  .login-card{
+    box-shadow:none;
+    border:none;
+    background:transparent;
+    padding:32px 24px;margin:0;
   }
 }
 /* bg-logo-glow no longer used — kept empty for legacy */
 .bg-logo-glow{ display:none; }
+
+/* ── NATIVE ANDROID APP LOGIN — a dedicated screen, not a squeezed-down
+   copy of the desktop one ──────────────────────────────────────────────
+   The desktop login is a two-panel marketing layout (POS mock screen +
+   sales copy) built to sell the product on a website. The <=768px rule
+   above already strips that down for narrow browser windows, but it's
+   still the *same* screen every mobile-web visitor sees — nothing here is
+   specific to the packaged app. Scoped to html.native-app (set by the
+   inline script in <head>, Capacitor-only) so it never touches the
+   website, including its own mobile view: this only ever applies inside
+   the installed APK, and wins on specificity over both rules above so it
+   doesn't matter whether a native device happens to report a wide or
+   narrow viewport (e.g. a tablet). Visually it picks up where the splash
+   screen's navy/cyan/purple gradient and centered logomark left off, so
+   the hand-off from splash → login reads as one continuous screen instead
+   of a jump-cut into an unrelated desktop-styled page. */
+html.native-app #loginScreen{
+  background:radial-gradient(120% 90% at 50% 0%, #101a44 0%, #0b1230 46%, #080b1f 100%);
+}
+html.native-app .login-left{ display:none; }
+html.native-app .login-wrap{
+  flex:1;width:100%;min-height:100vh;
+  background:transparent;
+  box-shadow:none;
+  justify-content:center;
+}
+html.native-app .login-wrap::before,
+html.native-app .login-wrap::after,
+html.native-app .login-p-bg{ display:none; }
+html.native-app .login-card{
+  background:rgba(15,20,40,0.55);
+  border:1px solid rgba(255,255,255,0.09);
+  border-radius:20px;
+  box-shadow:none;
+  padding:36px 26px;margin:20px 18px;
+}
+html.native-app .login-brand{ margin-bottom:26px; }
+/* Static tagline instead of the typewriter loop — one clean line, no
+   motion, consistent with every other native-app screen kicking off
+   animation entirely rather than leaving it half-stripped. */
+html.native-app .typewriter-cursor{ display:none; }
+html.native-app .login-card .form-input{ padding:13px 14px;font-size:15px; }
+html.native-app .login-card .btn-primary{ padding:15px 24px;font-size:16px; }
+html.native-app .login-footer{ padding:14px 24px 22px; }
 
 /* ============================================================
    FIX 2+3: AUTHORITATIVE PAGE VISIBILITY — eliminates gap
@@ -1700,9 +1843,26 @@ to{opacity:1;}}
 <body>
 
 <!-- ============================================================
+     CONNECTIVITY GATE — shown instead of the login screen until real
+     internet access is confirmed. PillarPOS is a totally-online system:
+     a cashier must never be able to sign in and start selling purely
+     from local cache, since sales made in that state only ever live in
+     one device's localStorage and are not guaranteed to survive.
+     ============================================================ -->
+<div id="offlineGate">
+  <div class="offline-card">
+    <div class="offline-icon" id="offlineIcon"><div class="offline-spinner"></div></div>
+    <div class="offline-title" id="offlineTitle">Checking your connection…</div>
+    <div class="offline-msg" id="offlineMsg">PillarPOS needs an internet connection to sign in.</div>
+    <button class="offline-retry" id="offlineRetryBtn" onclick="_retryConnectivityCheck()">Retry Connection</button>
+    <div class="offline-status" id="offlineStatusText"></div>
+  </div>
+</div>
+
+<!-- ============================================================
      LOGIN SCREEN
      ============================================================ -->
-<div id="loginScreen">
+<div id="loginScreen" style="display:none">
 
   <!-- LEFT DECORATIVE PANEL -->
   <div class="login-left" aria-hidden="true">
@@ -1966,6 +2126,25 @@ to{opacity:1;}}
 <!-- ============================================================
      FORGOT PASSWORD MODAL
      ============================================================ -->
+<!-- ============================================================
+     POST-LOGIN LOADING OVERLAY
+     Sits on top of everything from the moment login succeeds until the
+     initial cloud sync (cloudInit) fully resolves. Every real app hides its
+     own loading/rendering churn behind a solid screen instead of letting a
+     half-synced UI show through — this is that screen. As long as it's
+     opaque, nothing racing underneath it can ever be visible, regardless
+     of how many times a render happens to re-fire during that window.
+     ============================================================ -->
+<div id="appLoadingOverlay" style="display:none;position:fixed;inset:0;z-index:5000;background:#0b1220;flex-direction:column;align-items:center;justify-content:center;gap:16px;">
+  <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#22d3ee,#2563eb 55%,#7c3aed);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:26px;color:#fff;">P</div>
+  <div style="width:120px;height:4px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;">
+    <div id="appLoadingBar" style="height:100%;width:30%;border-radius:99px;background:linear-gradient(90deg,#2563eb,#22d3ee);animation:appLoadingSlide 1.1s ease-in-out infinite;"></div>
+  </div>
+  <div id="appLoadingText" style="font-size:13px;color:#94a3b8;">Setting up your workspace…</div>
+</div>
+<style>
+@keyframes appLoadingSlide{0%{transform:translateX(-120%);}100%{transform:translateX(340%);}}
+</style>
 <!-- ============================================================
      MAIN APP SHELL
      ============================================================ -->
@@ -5160,6 +5339,79 @@ async function checkTimeBeforeTransaction(){
   return true;
 }
 
+// ============================================================
+// CONNECTIVITY GATE — PillarPOS requires real internet access to sign
+// in. navigator.onLine only reflects whether the device has a network
+// interface up (e.g. connected to a Wi-Fi router with no WAN) — it says
+// nothing about actual internet reachability, so a real network probe
+// against an external host is required. This closes the gap that used
+// to let a cashier open the app while genuinely offline, sign in
+// against the cached local user list, and run a whole shift of sales
+// that lived only in that one device's localStorage — sales that then
+// had nothing to sync once the device came back online and could
+// vanish if that local cache was ever cleared or lost.
+// ============================================================
+const _CONNECTIVITY_PROBES = [
+  () => fetch('https://api.github.com/zen', {cache:'no-store', signal: AbortSignal.timeout(6000)}),
+  () => fetch('https://www.gstatic.com/generate_204', {cache:'no-store', mode:'no-cors', signal: AbortSignal.timeout(6000)}),
+];
+
+async function hasRealInternet(){
+  if(!navigator.onLine) return false;
+  for(const probe of _CONNECTIVITY_PROBES){
+    try{ await probe(); return true; } catch(e){ /* try next probe */ }
+  }
+  return false;
+}
+
+let _connectivityRetryTimer = null;
+let _connectivityResolve    = null;
+
+function hideOfflineGate(){
+  const gate = document.getElementById('offlineGate');
+  if(gate) gate.style.display = 'none';
+  const scr = document.getElementById('loginScreen');
+  if(scr) scr.style.display = '';
+  if(_connectivityRetryTimer){ clearInterval(_connectivityRetryTimer); _connectivityRetryTimer = null; }
+  window.removeEventListener('online', _onBrowserOnline);
+}
+
+function _onBrowserOnline(){ _retryConnectivityCheck(); }
+
+// Switches the gate into its red "offline" state and waits (via retry
+// button, periodic polling, and the browser's online event) until real
+// connectivity is confirmed. Resolves once online — never resolves false.
+function waitForConnectivity(){
+  return new Promise(resolve=>{
+    _connectivityResolve = resolve;
+    const gate = document.getElementById('offlineGate');
+    if(gate) gate.classList.add('offline');
+    const icon = document.getElementById('offlineIcon');
+    if(icon) icon.textContent = '📡';
+    const title = document.getElementById('offlineTitle');
+    if(title) title.textContent = 'No Internet Connection';
+    const msg = document.getElementById('offlineMsg');
+    if(msg) msg.textContent = 'PillarPOS requires an internet connection to sign in and keep sales safely backed up to the cloud. Please connect to Wi-Fi or mobile data, then try again.';
+    if(_connectivityRetryTimer) clearInterval(_connectivityRetryTimer);
+    _connectivityRetryTimer = setInterval(()=>{ if(navigator.onLine) _retryConnectivityCheck(); }, 8000);
+    window.addEventListener('online', _onBrowserOnline);
+  });
+}
+
+async function _retryConnectivityCheck(){
+  const btn    = document.getElementById('offlineRetryBtn');
+  const status = document.getElementById('offlineStatusText');
+  if(btn){ btn.disabled = true; btn.textContent = 'Checking…'; }
+  const online = await hasRealInternet();
+  if(online){
+    if(btn){ btn.disabled = false; btn.textContent = 'Retry Connection'; }
+    if(_connectivityResolve){ const r = _connectivityResolve; _connectivityResolve = null; r(); }
+  } else {
+    if(btn){ btn.disabled = false; btn.textContent = 'Retry Connection'; }
+    if(status) status.textContent = 'Still offline — last checked ' + new Date().toLocaleTimeString();
+  }
+}
+
 // Banner intentionally removed — clock drift is corrected silently via trustedNow(),
 // never surfaced to the cashier, and never blocks a sale.
 function _showTimeBanner(){ /* no-op — see note above */ }
@@ -5514,13 +5766,38 @@ function showBranchStep(){
 // AUTH
 // ============================================================
 async function doLogin(){
+  // A rapid double-tap on mobile (or Enter-in-password-field plus a tap
+  // that lands on the button a moment later) could fire this twice before
+  // the button's disabled state took effect, starting two competing
+  // launchApp()/cloudInit() runs that would each independently render the
+  // app — exactly the kind of race that read as blinking. Hard-blocked
+  // here regardless of button state.
+  if(APP._loginInFlight) return;
+  APP._loginInFlight = true;
+
   const username = document.getElementById('loginUsername').value.trim();
   const password = document.getElementById('loginPassword').value;
   const errEl    = document.getElementById('loginError');
   const loginBtn = document.querySelector('#loginStepForm .btn-primary');
   errEl.className = 'error-msg';
 
-  if(!username||!password){ showErr(errEl,'Please enter username and password.'); return; }
+  if(!username||!password){ APP._loginInFlight=false; showErr(errEl,'Please enter username and password.'); return; }
+
+  // Connection may have dropped after the login screen loaded (it was
+  // confirmed online at boot, via the #offlineGate check) — catch that
+  // immediately instead of letting the attempt spin for the full 12s
+  // watchdog below, and re-show the connectivity gate so the cashier can't
+  // keep retrying blind while genuinely offline.
+  if(!navigator.onLine){
+    APP._loginInFlight = false;
+    showErr(errEl, '📡 No internet connection. Check your connection and try again.');
+    const scr = document.getElementById('loginScreen');
+    if(scr) scr.style.display = 'none';
+    const gate = document.getElementById('offlineGate');
+    if(gate) gate.style.display = 'flex';
+    waitForConnectivity().then(hideOfflineGate);
+    return;
+  }
 
   // Always re-enable button when done
   if(loginBtn){ loginBtn.textContent='🔄 Signing in…'; loginBtn.disabled=true; }
@@ -5537,6 +5814,7 @@ async function doLogin(){
   finally{
     clearTimeout(_watchdog);
     if(!_watchdogFired && loginBtn){ loginBtn.textContent='Sign In →'; loginBtn.disabled=false; }
+    APP._loginInFlight = false;
   }
 }
 
@@ -5560,7 +5838,13 @@ async function _doLoginInner(username, password, errEl, loginBtn){
   const pwHash = await hashPwSecure(password);
   let user = null;
 
-  // ── Step 1: Try local auth first (always works, even offline) ──
+  // ── Step 1: Try local auth first ──
+  // NOTE: a local-only match is a starting point, not a final answer. When
+  // this business has Supabase configured (sbReady()), Step 2 below MUST
+  // confirm it against the cloud before `user` is trusted — a purely local
+  // match used to be enough on its own, which is exactly what let a cashier
+  // sign in and run a whole shift fully offline with sales that lived only
+  // in that one device's localStorage and never made it anywhere else.
   seedData();
   const localUsers = ls(LS_GLOBAL.users)||[];
   const localUser  = localUsers.find(u=>u.username.toLowerCase()===username.toLowerCase() && u.active);
@@ -5568,41 +5852,48 @@ async function _doLoginInner(username, password, errEl, loginBtn){
     user = localUser;
   }
 
-  // ── Step 2: Try cloud auth (may have newer password) ──
+  // ── Step 2: Cloud auth — REQUIRED whenever Supabase is configured ──
+  // PillarPOS is a totally-online system: if the cloud can't be reached to
+  // confirm the account, sign-in is refused instead of silently falling
+  // back to whatever happens to be cached on this device. sbFetch() already
+  // swallows its own network/timeout errors and returns null in that case,
+  // so null (not an empty array) is the specific signal that verification
+  // did not happen.
   if(sbReady()){
-    try{
-      const data = await sbFetch('users','GET',null,
-        '?username=ilike.'+encodeURIComponent(username)+'&active=eq.true&limit=1');
-      if(data && data.length){
-        const cu = data[0];
-        const cloudUser = {
-          id:cu.id, name:cu.name, username:cu.username, role:cu.role,
-          branch:cu.branch||'HQ', active:true,
-          passwordHash:cu.password_hash,
-          lastLogin:cu.last_login, createdAt:cu.created_at
-        };
-        if(cu.password_hash === pwHash){
-          // Cloud password matches — use cloud user (most up to date)
-          user = cloudUser;
-        } else if(user){
-          // Local matched but cloud has different hash
-          // Update cloud with local hash so they stay in sync
-          sbFetch('users','PATCH',{password_hash:pwHash},'?id=eq.'+cloudUser.id);
-        } else if(!user){
-          // Neither matched yet — cloud user exists but wrong password
-          // Will fall to error below
-        }
-        // Always update local cache with cloud user data (except passwordHash if local matched)
-        if(user){
-          const idx = localUsers.findIndex(u=>u.username.toLowerCase()===username.toLowerCase());
-          const merged = {...cloudUser, passwordHash: pwHash}; // use the working hash
-          if(idx>=0) localUsers[idx] = merged;
-          else localUsers.push(merged);
-          lsSave(LS_GLOBAL.users, localUsers);
-        }
+    const data = await sbFetch('users','GET',null,
+      '?username=ilike.'+encodeURIComponent(username)+'&active=eq.true&limit=1');
+    if(data === null){
+      showErr(errEl, '📡 Unable to reach the cloud to verify your account. Check your internet connection and try again.');
+      return;
+    }
+    // Cloud reachable — its answer is authoritative. Reset `user` and only
+    // trust it if the cloud itself confirms this account.
+    user = null;
+    if(data.length){
+      const cu = data[0];
+      const cloudUser = {
+        id:cu.id, name:cu.name, username:cu.username, role:cu.role,
+        branch:cu.branch||'HQ', active:true,
+        passwordHash:cu.password_hash,
+        lastLogin:cu.last_login, createdAt:cu.created_at
+      };
+      if(cu.password_hash === pwHash){
+        // Cloud password matches — use cloud user (most up to date)
+        user = cloudUser;
+      } else if(localUser && localUser.passwordHash === pwHash){
+        // Local matched but cloud has different hash
+        // Update cloud with local hash so they stay in sync
+        user = cloudUser;
+        sbFetch('users','PATCH',{password_hash:pwHash},'?id=eq.'+cloudUser.id);
       }
-    } catch(e){
-      console.warn('Cloud auth check failed, using local only:', e);
+      // Always update local cache with cloud user data (except passwordHash if local matched)
+      if(user){
+        const idx = localUsers.findIndex(u=>u.username.toLowerCase()===username.toLowerCase());
+        const merged = {...cloudUser, passwordHash: pwHash}; // use the working hash
+        if(idx>=0) localUsers[idx] = merged;
+        else localUsers.push(merged);
+        lsSave(LS_GLOBAL.users, localUsers);
+      }
     }
   }
 
@@ -6005,6 +6296,11 @@ function launchApp(){
 
   if(sbReady()){
     // CLOUD MODE: seed users only, then pull everything from Supabase
+    // Cover the whole app with a solid loading screen for this entire
+    // window — nav('sell') below renders local cache first, then cloudInit
+    // renders again with fresh cloud data; the user should see neither of
+    // those intermediate states, just one clean reveal once both are done.
+    showAppLoadingOverlay('Setting up your workspace…');
     seedData();
     // FIX: Show loading state immediately — do NOT render stale cached products
     const grid = document.getElementById('productsGrid');
@@ -6013,6 +6309,12 @@ function launchApp(){
       + '<div style="font-size:14px;font-weight:600;color:#64748b;">Loading products from cloud…</div>'
       + '<div style="font-size:12px;color:#94a3b8;margin-top:6px;">Please wait</div></div>';
     updateLowStockBadge();
+    // Set before nav('sell') runs (not just inside cloudInit itself) so its
+    // own product-pull-and-render is already skipped on this very first
+    // call — otherwise it would race the pull cloudInit() is about to kick
+    // off a few lines below, both rebuilding the grid independently as each
+    // happened to resolve.
+    APP._initialCloudSyncInFlight = true;
     nav('sell');
     // Update price-edit hint badge based on role/permission
     updatePriceEditHint();
@@ -6060,27 +6362,59 @@ nav('sell');
   };
 }
 
+let _appLoadingSafetyTimer = null;
+function showAppLoadingOverlay(text){
+  const el = document.getElementById('appLoadingOverlay');
+  if(!el) return;
+  const textEl = document.getElementById('appLoadingText');
+  if(textEl && text) textEl.textContent = text;
+  el.style.display = 'flex';
+  // Never let this screen get stuck: whatever cloudInit is waiting on has
+  // its own per-request timeout already, but if something unexpected still
+  // hangs, force it down after 15s rather than trap the user behind it.
+  if(_appLoadingSafetyTimer) clearTimeout(_appLoadingSafetyTimer);
+  _appLoadingSafetyTimer = setTimeout(hideAppLoadingOverlay, 15000);
+}
+function hideAppLoadingOverlay(){
+  const el = document.getElementById('appLoadingOverlay');
+  if(el) el.style.display = 'none';
+  if(_appLoadingSafetyTimer){ clearTimeout(_appLoadingSafetyTimer); _appLoadingSafetyTimer = null; }
+}
+
 // One-time cloud initialisation on login
+//
+// APP._initialCloudSyncInFlight guards against a real race that used to
+// cause the sell page to blink/blank/reappear right after logging in with
+// cloud configured: nav('sell') (called from launchApp()) independently
+// pulls + renders products, while this function was ALSO pulling + rendering
+// the exact same data at the same time — two unsynchronized async calls
+// racing each other, each rebuilding the grid whenever it happened to
+// resolve. nav()'s own pull is skipped while this flag is set.
 async function cloudInit(){
+  APP._initialCloudSyncInFlight = true;
   try{
     toast('☁️ Loading from cloud…','info');
 
-    // Pull all data from cloud to ensure we have the latest
-    const productsOk = await sbPullProducts();
-    const usersOk = await sbPullUsers();
-    const transactionsOk = await sbPullTransactions();
-    await sbPullExpenses();
-    try{ await sbPullStockHistory(); } catch(e){}
-    const creditsOk = await sbPullCredits();
-    const settingsOk = await sbPullSettings();
+    // All of these are independent reads from different tables — pulling
+    // them in parallel instead of one at a time cuts total wait time from
+    // the sum of every round trip down to just the slowest one, which is
+    // most of what made the first login after a QR scan feel slow/heavy
+    // on mobile data.
+    const [productsOk, usersOk, transactionsOk, creditsOk, settingsOk] = await Promise.all([
+      sbPullProducts(),
+      sbPullUsers(),
+      sbPullTransactions(),
+      sbPullCredits(),
+      sbPullSettings(),
+      sbPullExpenses().catch(()=>{}),
+      sbPullStockHistory().catch(()=>{}),
+      sbPullRolePerms().catch(()=>{}),
+      sbPullSubscription().catch(()=>{}),
+      sbPullLoyalty().catch(()=>{}),
+      sbPullGiftCards().catch(()=>{}),
+      sbPullPromos().catch(()=>{}),
+    ]);
     if(settingsOk){ const _s=ls(LS.settings)||{}; applyBizName(_s.bizName||''); }
-    // Pull role permissions from cloud
-    try{ await sbPullRolePerms(); } catch(e){}
-    // Always pull subscription from server — never rely on local cache alone
-    try{ await sbPullSubscription(); } catch(e){}
-    try{ await sbPullLoyalty(); } catch(e){}
-    try{ await sbPullGiftCards(); } catch(e){}
-    try{ await sbPullPromos(); } catch(e){}
 
     if(productsOk){
       const count = (ls(LS.products)||[]).length;
@@ -6115,6 +6449,9 @@ if(active.id==='page-dashboard') renderDashboard();
   } catch(e){
     toast('❌ Cloud init failed: '+e.message,'warn');
     console.error('cloudInit error:', e);
+  } finally {
+    APP._initialCloudSyncInFlight = false;
+    hideAppLoadingOverlay();
   }
 }
 
@@ -6245,7 +6582,12 @@ if(el){
   if(page==='sell'){
     _syncFloatBtns();
     buildCategoryFilter(); renderProducts(); updateLowStockBadge();
-    if(sbReady()){
+    // Skip this refresh while cloudInit()'s own initial pull is in flight —
+    // both used to fire at once on login and race each other, each
+    // rebuilding the grid whenever it happened to resolve, which is what
+    // read as the sell page blinking/blanking/reappearing right after
+    // logging in with cloud configured.
+    if(sbReady() && !APP._initialCloudSyncInFlight){
       sbPullProducts().then(ok=>{ if(ok){ buildCategoryFilter(); renderProducts(); updateLowStockBadge(); } });
     }
     setTimeout(()=>{ const s=document.getElementById('productSearch'); if(s) s.focus(); },80);
@@ -6257,7 +6599,7 @@ if(el){
   }
   else if(page==='inventory'){
     _renderInventoryUI();
-    if(sbReady()) sbPullProducts().then(()=>{ buildCategoryFilter(); _renderInventoryUI(); updateLowStockBadge(); });
+    if(sbReady() && !APP._initialCloudSyncInFlight) sbPullProducts().then(()=>{ buildCategoryFilter(); _renderInventoryUI(); updateLowStockBadge(); });
   }
   else if(page==='credits'){
     renderCredits();
@@ -10183,6 +10525,7 @@ function _onRealtimeSettings(record){
 // ============================================================
 let _realtimeWs = null;
 let _realtimeRetry = 0;
+let _realtimeHeartbeat = null;
 
 function startRealtimeSync(){
   if(!sbReady()) return;
@@ -10287,8 +10630,14 @@ function startRealtimeSync(){
     }
   };
 
-  // Send heartbeat every 25s to keep WS alive
-  setInterval(()=>{
+  // Send heartbeat every 25s to keep WS alive. On a flaky mobile connection
+  // this function can run again on every reconnect — without clearing the
+  // previous timer first, each reconnect stacked another 25s interval on
+  // top of the last, forever, all of them still trying to send on a closed
+  // socket. That's wasted work piling up in the background on exactly the
+  // kind of unstable network where it happens most.
+  if(_realtimeHeartbeat) clearInterval(_realtimeHeartbeat);
+  _realtimeHeartbeat = setInterval(()=>{
     if(_realtimeWs && _realtimeWs.readyState === WebSocket.OPEN){
       _realtimeWs.send(JSON.stringify({topic:'phoenix',event:'heartbeat',payload:{},ref:'hb'}));
     }
@@ -10297,6 +10646,7 @@ function startRealtimeSync(){
 
 function stopRealtimeSync(){
   if(_realtimeWs){ _realtimeWs.close(); _realtimeWs = null; }
+  if(_realtimeHeartbeat){ clearInterval(_realtimeHeartbeat); _realtimeHeartbeat = null; }
 }
 
 function _onRealtimeTransaction(record){
@@ -12909,7 +13259,19 @@ function syncMobileCart(){
   }, {passive:true});
 })();
 
-document.addEventListener('DOMContentLoaded',()=>{
+document.addEventListener('DOMContentLoaded', async ()=>{
+
+  // ── CONNECTIVITY GATE ───────────────────────────────────────────
+  // Block everything below (seeding local data, wiring the login form,
+  // pulling branches/settings) until real internet access is confirmed.
+  // The login screen stays hidden (display:none, set in its markup)
+  // behind the #offlineGate overlay the whole time, so there is never a
+  // flash of a usable login form while offline.
+  if(!(await hasRealInternet())){
+    await waitForConnectivity();
+  }
+  hideOfflineGate();
+  // ─────────────────────────────────────────────────────────────────
 
   // ── SECURITY: Disable right-click context menu ─────────────────
   document.addEventListener('contextmenu', e => e.preventDefault());
@@ -12929,14 +13291,90 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
 
   // ── Kiosk / Fullscreen on launch ──────────────────────────────
+  // Only meaningful in a real browser tab / installed PWA, where it hides
+  // the address bar. Inside the native Android app (Capacitor) there is no
+  // browser chrome to hide, and on any phone-width screen (native or a
+  // plain mobile browser tab — Chrome grants real Fullscreen API access to
+  // ordinary tabs too) requesting it on the same tap that focuses a login
+  // field fights the soft keyboard's own resize: the viewport jumps to
+  // fullscreen dimensions at the exact moment the keyboard is animating in,
+  // and that fight is what was reflowing the whole 100vh-based login layout
+  // and reading as "flickering". Skipped entirely on phones as a result —
+  // it only ever made sense as a kiosk affordance for a desktop/tablet
+  // terminal screen anyway.
+  // "Is this a PC" is checked via input capability (mouse + hover), not just
+  // screen width — a width breakpoint alone can still say yes on a wide
+  // tablet or a phone in landscape, both of which are touch devices where
+  // this kiosk behavior is just as disruptive as on a narrow phone.
+  const _isNativeApp = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  const _isPC = !!(window.matchMedia && window.matchMedia('(pointer:fine)').matches && window.matchMedia('(hover:hover)').matches);
+  const _skipKioskFullscreen = _isNativeApp || !_isPC;
   function requestFullscreen(){
+    if(_skipKioskFullscreen) return;
     const el=document.documentElement;
     const fn=el.requestFullscreen||el.webkitRequestFullscreen||el.mozRequestFullScreen||el.msRequestFullscreen;
     if(fn) fn.call(el).catch(()=>{});
   }
-  // Register service worker so the app installs as a PWA (required for TWA/APK wrapping)
-  if('serviceWorker' in navigator){
+  // Register service worker so the app installs as a PWA — but only for the
+  // real website. Inside the native app, Capacitor already bundles every
+  // file straight into the APK, so a service worker has nothing to add and
+  // is pure downside: its cache survives a plain app update (only a full
+  // uninstall clears it), so it can keep serving an old, stale copy of this
+  // page across every rebuild — which reads as the app being "stuck" no
+  // matter what actually changed in the new build. Anything left over from
+  // an earlier version that DID register one gets torn down here too.
+  if(_isNativeApp){
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.getRegistrations().then(regs=>regs.forEach(r=>r.unregister())).catch(()=>{});
+    }
+    if('caches' in window){
+      caches.keys().then(keys=>keys.forEach(k=>caches.delete(k))).catch(()=>{});
+    }
+  } else if('serviceWorker' in navigator){
     navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  }
+
+  // ── Hardware back button (native Android app only) ─────────────
+  // Without this, Capacitor's default behaviour is "go back in WebView
+  // history, else exit" — but this app never pushes history entries (nav()
+  // just toggles which #page-* div is visible), so every press anywhere
+  // instantly minimized the app. That's the single biggest thing that makes
+  // a wrapped web page feel like a web page instead of a real app. Wired to
+  // mirror what a native app actually does: dismiss whatever's on top
+  // (scanner → modal → dropdown), then return to the Sell screen from any
+  // other page, and only exit from Sell/login after a confirming second
+  // press — never on the first.
+  if(_isNativeApp && window.Capacitor.Plugins && window.Capacitor.Plugins.App){
+    let _backPressArmedAt = 0;
+    window.Capacitor.Plugins.App.addListener('backButton', function(){
+      const qrOverlay = document.getElementById('qrScanOverlay');
+      if(qrOverlay){ closeQrScanner(); return; }
+
+      const receipt = document.getElementById('receiptSplash');
+      if(receipt && receipt.classList.contains('open')){ closeReceiptSplash(); return; }
+
+      const openModals = document.querySelectorAll('.modal-overlay.open');
+      if(openModals.length){ openModals[openModals.length-1].classList.remove('open'); return; }
+
+      const openNavGroup = document.querySelector('.nav-group.open');
+      if(openNavGroup){ openNavGroup.classList.remove('open'); return; }
+
+      const sellPage = document.getElementById('page-sell');
+      const onSellPage = !!(sellPage && sellPage.classList.contains('active'));
+      if(APP.currentUser && !onSellPage){ nav('sell'); return; }
+
+      // On the Sell screen (or the login screen, before any of the above
+      // applied) — require a second press within 2s before actually exiting,
+      // same pattern every native Android app uses to stop an accidental tap
+      // from kicking the cashier out mid-shift.
+      const now = Date.now();
+      if(now - _backPressArmedAt < 2000){
+        window.Capacitor.Plugins.App.exitApp();
+      } else {
+        _backPressArmedAt = now;
+        toast('Press back again to exit', 'info');
+      }
+    });
   }
 
   // ── PWA Install prompt ────────────────────────────────────────
@@ -12986,9 +13424,11 @@ document.addEventListener('DOMContentLoaded',()=>{
     document.removeEventListener('touchstart', _kioskFirstGesture, true);
     document.removeEventListener('keydown', _kioskFirstGesture, true);
   }
-  document.addEventListener('click', _kioskFirstGesture, true);
-  document.addEventListener('touchstart', _kioskFirstGesture, true);
-  document.addEventListener('keydown', _kioskFirstGesture, true);
+  if(!_skipKioskFullscreen){
+    document.addEventListener('click', _kioskFirstGesture, true);
+    document.addEventListener('touchstart', _kioskFirstGesture, true);
+    document.addEventListener('keydown', _kioskFirstGesture, true);
+  }
 
   // Apply saved theme to login screen
   const savedTheme=ls(LS_GLOBAL.theme)||'emerald';
@@ -15561,6 +16001,14 @@ document.addEventListener('DOMContentLoaded', function(){
   var pi=0, ci=0, deleting=false;
   var el = document.getElementById('typewriterText');
   if(!el) return;
+  // The native app kills every CSS animation/transition outright — this
+  // loop is a setTimeout chain, not a CSS animation, so it would otherwise
+  // keep typing/deleting text forever, the one animated thing left on a
+  // screen that's supposed to have none. Show the first phrase, static.
+  if(document.documentElement.classList.contains('native-app')){
+    el.textContent = phrases[0];
+    return;
+  }
   function tick(){
     var phrase = phrases[pi];
     if(!deleting){
