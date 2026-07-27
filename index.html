@@ -4234,6 +4234,7 @@ html.native-app .login-footer{ padding:14px 24px 22px; }
           <div class="form-group">
             <label class="form-label">Cost Price (KES)</label>
             <input class="form-input" type="number" id="pCost" placeholder="0.00" min="0">
+            <div class="error-msg" id="pCostError"></div>
           </div>
         </div>
         <div>
@@ -8123,6 +8124,7 @@ function openAddProductModal(){
   const pvr=document.getElementById('pVatRate'); if(pvr) pvr.value='0';
   const pw=document.getElementById('pWeighable'); if(pw) pw.checked=false;
   const ppe=document.getElementById('pPriceEditable'); if(ppe) ppe.checked=false;
+  document.getElementById('pCostError').className='error-msg';
   openModal('productModal');
 }
 
@@ -8145,6 +8147,7 @@ function openEditProductModal(id){
   const pvr=document.getElementById('pVatRate'); if(pvr) pvr.value=String(p.vatRate||'0');
   const pw=document.getElementById('pWeighable'); if(pw) pw.checked=!!(p.weighable);
   const ppe=document.getElementById('pPriceEditable'); if(ppe) ppe.checked=!!(p.priceEditable);
+  document.getElementById('pCostError').className='error-msg';
   openModal('productModal');
 }
 
@@ -8154,10 +8157,18 @@ function saveProduct(){
   const price=parseFloat(document.getElementById('pPrice').value)||0;
   if(!name||!category||!price){ toast('Name, category and price are required','warn'); return; }
 
+  const cost=parseFloat(document.getElementById('pCost').value)||0;
+  const pCostErrEl=document.getElementById('pCostError');
+  pCostErrEl.className='error-msg';
+  if(cost>price){
+    showErr(pCostErrEl,`Cost price (${kes(cost)}) cannot exceed the selling price (${kes(price)}). Please correct it before saving.`);
+    return;
+  }
+
   const products=ls(LS.products)||[];
   const productData={
     name, category, price,
-    cost:parseFloat(document.getElementById('pCost').value)||0,
+    cost,
     stock:parseFloat(document.getElementById('pStock').value)||0,
     lowStockAt:parseFloat(document.getElementById('pLowStock').value)||5,
     unit:document.getElementById('pUnit').value.trim()||'unit',
@@ -12291,6 +12302,7 @@ function previewCSV(event){
         const row={ name:name||'', category:category||'', price:parseFloat(price)||0, cost:parseFloat(cost)||0,
           stock:parseFloat(stock)||0, lowStockAt:parseInt(lowStockAt)||5, unit:unit||'unit', sku:sku||'', emoji:emoji||'📦',
           _update:!!existing, _existingId:existing?.id||null };
+        row._invalidCost = row.cost>row.price;
         _csvParsedRows.push(row);
         return row;
       }).filter(r=>r.name);
@@ -12298,7 +12310,7 @@ function previewCSV(event){
       document.getElementById('csvPreviewLabel').textContent=`${rows.length} row(s) found — ${rows.filter(r=>r._update).length} update(s), ${rows.filter(r=>!r._update).length} new.`;
       // Show replace-all option
       document.getElementById('csvReplaceRow').style.display='flex';
-      document.getElementById('csvPreviewTable').innerHTML=rows.map(r=>`<tr>
+      document.getElementById('csvPreviewTable').innerHTML=rows.map(r=>`<tr${r._invalidCost?' style="background:var(--err-bg);"':''}>
         <td style="font-weight:600;">${r.name}</td>
         <td>${r.category}</td>
         <td>${kes(r.price)}</td>
@@ -12307,10 +12319,17 @@ function previewCSV(event){
         <td>${r.lowStockAt}</td>
         <td>${r.unit}</td>
         <td style="font-family:monospace;font-size:11px;">${r.sku||'—'}</td>
-        <td>${r._update?'<span class="badge badge-warn">Update</span>':'<span class="badge badge-ok">New</span>'}</td>
+        <td>${r._invalidCost?'<span class="badge badge-err">Cost &gt; Price</span>':(r._update?'<span class="badge badge-warn">Update</span>':'<span class="badge badge-ok">New</span>')}</td>
       </tr>`).join('');
       document.getElementById('csvPreviewWrap').style.display='block';
-      document.getElementById('csvImportBtn').disabled=rows.length===0;
+
+      const invalidRows=rows.filter(r=>r._invalidCost);
+      if(invalidRows.length){
+        showErr(errEl, `Import declined: ${invalidRows.length} product(s) have a cost price higher than the selling price — `+
+          `${invalidRows.slice(0,5).map(r=>r.name).join(', ')}${invalidRows.length>5?', …':''}. `+
+          `Please correct these values in the CSV and re-upload.`);
+      }
+      document.getElementById('csvImportBtn').disabled=rows.length===0||invalidRows.length>0;
     } catch(err){ errEl.textContent='Failed to parse CSV: '+err.message; errEl.className='error-msg show'; }
   };
   reader.readAsText(file);
@@ -12318,6 +12337,7 @@ function previewCSV(event){
 
 function confirmCSVImport(){
   if(!_csvParsedRows.length){ toast('No rows to import','warn'); return; }
+  if(_csvParsedRows.some(r=>r._invalidCost)){ toast('Import declined: one or more rows have cost price higher than selling price','err'); return; }
   const replaceAll = document.getElementById('csvReplaceAll')?.checked;
   // FIX: When replaceAll — truly empty array, no stale products survive
   let products = replaceAll ? [] : (ls(LS.products)||[]);
