@@ -1185,6 +1185,57 @@ textarea.form-input{resize:vertical;min-height:80px;}
   display:flex;gap:8px;justify-content:flex-end;background:#f8fafc;
 }
 /* ============================================================
+   PAGE TRANSITIONS — subtle fade+rise on every tab/page switch so
+   navigating reads as moving through screens, not a hard content swap.
+   ============================================================ */
+@keyframes pageFadeIn{
+  from{opacity:0;transform:translateY(10px);}
+  to{opacity:1;transform:translateY(0);}
+}
+.page.active{animation:pageFadeIn .22s cubic-bezier(.4,0,.2,1);}
+/* Kept alive inside the packaged native app even though the blanket
+   html.native-app kill-switch above zeroes every other animation/transition:
+   unlike the login/splash fades that switch exists to protect (which start
+   painted at opacity:0 and rely on their animation to ever reach opacity:1),
+   this one only ever fires post-login on an already-visible tab switch, so
+   it can't reproduce the flash-of-motion the switch was written to avoid. */
+html.native-app .page.active{
+  animation-duration:.22s !important;
+  animation-delay:0s !important;
+}
+
+/* ── "Back to Sell" strip — every page already renders its own topbar
+   title, so this doesn't repeat it; it only supplies the one thing mobile
+   was missing: a visible, tappable way back for screens opened from the
+   More drawer (the 5 primary tabs already have the bottom bar itself for
+   that). Hidden on every viewport by default; the mobile media query below
+   is what turns .show into a real display, so it can never appear on
+   desktop even if a bug left the class toggled on. ── */
+.mobile-page-header{
+  display:none;align-items:center;gap:8px;
+  height:36px;padding:0 16px;flex-shrink:0;
+  background:var(--pl);color:var(--p);
+  font-size:13px;font-weight:700;cursor:pointer;
+  border-bottom:1px solid var(--bdr);
+}
+.mobile-page-back-icon{font-size:16px;line-height:1;}
+
+/* ── Tap feedback — touch devices only, so mouse clicks on desktop never
+   pick up a lingering :active scale from a stray press. ── */
+@media (hover:none) and (pointer:coarse){
+  .btn:active,.nav-item:active,.nav-dropdown-item:active,.nav-group-trigger:active,
+  .more-item:active,.mn-item:active,.chip:active,.product-card:active,
+  .qty-btn:active,.mobile-page-header:active{
+    transform:scale(.95);opacity:.8;
+  }
+  .btn,.nav-item,.nav-dropdown-item,.nav-group-trigger,.more-item,.mn-item,
+  .chip,.product-card,.qty-btn,.mobile-page-header{
+    transition:transform .08s ease,opacity .08s ease;
+  }
+}
+* {-webkit-tap-highlight-color:transparent;}
+
+/* ============================================================
    MOBILE RESPONSIVE — full breakpoint system
    ============================================================ */
 
@@ -1311,6 +1362,7 @@ textarea.form-input{resize:vertical;min-height:80px;}
   /* ── Show mobile nav & FAB ──────────────────────────────── */
   #mobileNav{ display:block; }
   #mobileCartFab{ display:flex; }
+  .mobile-page-header.show{ display:flex; }
 
   /* ── Main content: add bottom padding for nav bar ────────── */
   .main{ padding-bottom:58px; }
@@ -2326,6 +2378,12 @@ html.native-app .login-footer{ padding:14px 24px 22px; }
       <button class="btn btn-secondary btn-sm" id="pwaInstallBtn" onclick="installPWA()" style="display:none;">⬇ Install App</button>
       <button class="topnav-logout" onclick="doLogout()">🚪 Sign Out</button>
     </div>
+  </div>
+
+  <!-- MOBILE "BACK TO SELL" STRIP — shown only on pages reached via the More
+       drawer, since those aren't reachable from the bottom tab bar itself -->
+  <div class="mobile-page-header" id="mobilePageHeader" onclick="mobileHeaderBack()">
+    <span class="mobile-page-back-icon">←</span><span>Back to Sell</span>
   </div>
 
   <!-- MAIN CONTENT -->
@@ -3824,6 +3882,9 @@ html.native-app .login-footer{ padding:14px 24px 22px; }
     <button class="mn-item" id="mn-transactions" onclick="mobileNav('transactions')">
       <span class="mn-icon">📋</span>Sales
     </button>
+    <button class="mn-item" id="mn-credits" onclick="mobileNav('credits')">
+      <span class="mn-icon">🤝</span>Credit
+    </button>
     <button class="mn-item" id="mn-more" onclick="openMobileMore()">
       <span class="mn-icon">☰</span>More
     </button>
@@ -3887,7 +3948,6 @@ html.native-app .login-footer{ padding:14px 24px 22px; }
 
   <div class="more-sep"></div>
   <div class="more-grp-title">❤️ Customers</div>
-  <button class="more-item" onclick="mobileNav('credits');closeMobileMore()"><span class="mi-icon">🤝</span>Credit Accounts</button>
   <button class="more-item" onclick="mobileNav('promotions');closeMobileMore()"><span class="mi-icon">🎯</span>Promotions</button>
   <button class="more-item" onclick="mobileNav('gift-cards');closeMobileMore()"><span class="mi-icon">🎁</span>Gift Cards</button>
   <button class="more-item" onclick="mobileNav('loyalty');closeMobileMore()"><span class="mi-icon">⭐</span>Loyalty</button>
@@ -6548,6 +6608,10 @@ document.addEventListener('click',function(e){
 // ============================================================
 // NAVIGATION
 // ============================================================
+// Pages reachable directly from the bottom tab bar on mobile — every other
+// page (opened via the More drawer) gets the "Back to Sell" strip instead.
+const MOBILE_PRIMARY_PAGES=['sell','dashboard','inventory','transactions','credits'];
+
 function nav(page){
   // Role guards — prevent direct navigation to restricted pages
   const _role = APP.currentUser?.role;
@@ -6578,6 +6642,10 @@ if(el){
   document.querySelectorAll('.nav-item,.nav-dropdown-item').forEach(n=>n.classList.remove('active'));
   const navEl = document.getElementById('nav-'+page);
   if(navEl) navEl.classList.add('active');
+
+  // Mobile "Back to Sell" strip — only for pages not on the bottom tab bar
+  const mph = document.getElementById('mobilePageHeader');
+  if(mph) mph.classList.toggle('show', !MOBILE_PRIMARY_PAGES.includes(page));
 
   // ── Original pages ────────────────────────────────────────
   if(page==='sell'){
@@ -13204,6 +13272,10 @@ function mobileNav(page){
   nav(page);
 }
 
+// Tapped from the "Back to Sell" strip on pages opened via the More drawer —
+// mirrors the hardware back button's own "return to Sell" behavior.
+function mobileHeaderBack(){ mobileNav('sell'); }
+
 function syncMobileMoreMenu(){
   const isAdmin = ['Admin','Super Admin'].includes(APP.currentUser?.role);
   const isSuperAdmin = APP.currentUser?.role === 'Super Admin';
@@ -13405,7 +13477,7 @@ document.addEventListener('DOMContentLoaded', async ()=>{
 
       const sellPage = document.getElementById('page-sell');
       const onSellPage = !!(sellPage && sellPage.classList.contains('active'));
-      if(APP.currentUser && !onSellPage){ nav('sell'); return; }
+      if(APP.currentUser && !onSellPage){ mobileNav('sell'); return; }
 
       // On the Sell screen (or the login screen, before any of the above
       // applied) — require a second press within 2s before actually exiting,
