@@ -7136,10 +7136,18 @@ async function completeSale(){
 
   // Build transaction
   const custId = APP.payMethod==='Credit' ? document.getElementById('creditCustomerSel').value : null;
+  // Snapshot each item's cost price NOW, at the moment of sale — this freezes
+  // historical Gross Profit against later cost-price edits (restock, product
+  // edit, CSV import). Dashboard/Z-report must read this snapshot, not the
+  // product's current cost.
+  const _saleProducts=ls(LS.products)||[];
   const tx={
     id:uid(),
     date:trustedISO(),
-    items:APP.cart.map(i=>({...i})),
+    items:APP.cart.map(i=>{
+      const _p=_saleProducts.find(x=>x.id===i.id);
+      return {...i, cost: i.cost!=null ? i.cost : (_p ? (_p.cost||_p.cost_price||0) : 0)};
+    }),
     subtotal, discount:disc, total:netDue,
     grossTotal: total,                 // total before loyalty redemption
     method:APP.payMethod,
@@ -7831,7 +7839,11 @@ function _drawDashboard(txs, products){
   });
   const rangeProfit=rangeTxs.reduce((sum,t)=>{
     return sum+(t.items||[]).reduce((s,i)=>{
-      const cost=prodMap[i.id]?.cost||0;
+      // Prefer the cost snapshotted at sale time so later cost-price edits
+      // (restock, product edit, CSV import) don't retroactively change
+      // historical profit. Fall back to current product cost only for
+      // older transactions recorded before this snapshot existed.
+      const cost=i.cost!=null ? i.cost : (prodMap[i.id]?.cost||0);
       return s+(i.price-cost)*i.qty;
     },0);
   },0);
@@ -8258,16 +8270,28 @@ function openRestockModal(id){
   openModal('restockModal');
 }
 
-function confirmRestock(){
+async function confirmRestock(){
   const qty=parseFloat(document.getElementById('restockQty').value)||0;
   if(qty<=0){ toast('Enter a valid quantity','warn'); return; }
   if(!restockingProductId){ toast('Error: No product selected','err'); return; }
   const products=ls(LS.products)||[];
   const p=products.find(x=>x.id===restockingProductId);
   if(!p){ toast('Error: Product not found','err'); console.error('Restock failed: product not found', restockingProductId, products.length); return; }
+  const newCost=parseFloat(document.getElementById('restockCost').value);
+  // Sanity check: cost price here must be PER UNIT. Entering a whole
+  // invoice/case total by mistake silently wrecks Gross Profit on every
+  // past and future sale of this product, so flag anything that looks
+  // like a per-unit/sell-price mixup before it's saved.
+  if(newCost>0 && p.price>0 && newCost>=p.price){
+    const ok=await confirmAction(
+      `New cost price (KES ${newCost}) is at or above the sell price (KES ${p.price}) for ${p.name}. `+
+      `Make sure this is the PER-UNIT cost, not a total invoice/case amount. Save anyway?`,
+      {title:'⚠️ Check cost price', okText:'Save anyway', okClass:'btn-danger'}
+    );
+    if(!ok) return;
+  }
   const prevStock = p.stock;
   p.stock += qty;
-  const newCost=parseFloat(document.getElementById('restockCost').value);
   if(newCost>0) p.cost=newCost;
   const note = document.getElementById('restockNote').value.trim();
   lsSave(LS.products,products);
@@ -14039,6 +14063,9 @@ function renderZReport(){
   const s=ls(LS.settings)||{};
   const products=ls(LS.products)||[];
   const totalCost=todayTxs.reduce((s2,t)=>s2+t.items.reduce((a,i)=>{
+    // Prefer the cost snapshotted at sale time (immune to later cost-price
+    // edits); fall back to current product cost for pre-snapshot transactions.
+    if(i.cost!=null) return a+i.cost*i.qty;
     const p=products.find(x=>x.id===i.id);
     return a+(p?(p.cost||0)*i.qty:0);
   },0),0);
@@ -14121,7 +14148,10 @@ function _buildZReportHTML(){
   const totalCreditPays=creditPays.reduce((s,t)=>s+t.total,0);
   const cashIn=totalCash+totalMpesa+totalSplit+totalGc+totalCreditPays;
   const products=ls(LS.products)||[];
-  const totalCost=periodTxs.reduce((s2,t)=>s2+t.items.reduce((a,i)=>{ const p=products.find(x=>x.id===i.id); return a+(p?(p.cost||0)*i.qty:0); },0),0);
+  const totalCost=periodTxs.reduce((s2,t)=>s2+t.items.reduce((a,i)=>{
+    if(i.cost!=null) return a+i.cost*i.qty;
+    const p=products.find(x=>x.id===i.id); return a+(p?(p.cost||0)*i.qty:0);
+  },0),0);
   const grossProfit=total-totalCost;
   const voidCount=allTxs.filter(t=>t.voided&&isSaleTxAny(t)&&t.date&&t.date.slice(0,10)>=fromStr&&t.date.slice(0,10)<=toStr).length;
   const branchId=APP.currentBranch?.id||'main';
