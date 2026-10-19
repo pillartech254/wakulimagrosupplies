@@ -7735,9 +7735,8 @@ async function _renderDashboardFromCloud(){
 
   try{
     // Fetch ALL transactions for branch — filter client-side by local date
-    const since90 = trustedNow(); since90.setDate(since90.getDate()-90);
     const [txData, prodData] = await Promise.all([
-      sbSafeFetch('transactions', branchId, '&date=gte.'+since90.toISOString()+'&order=date.desc', 5000),
+      sbFetchTxRange(branchId, from, to),
       sbSafeFetch('products', branchId, '', 1000)
     ]);
 
@@ -7765,20 +7764,7 @@ async function _renderDashboardFromCloud(){
     const localVoidMap = {};
     existingTxs.forEach(t=>{ if(t.voided) localVoidMap[t.id]=t; });
 
-    lsSave(LS.transactions, allTxs.map(r=>{
-      const lv = localVoidMap[r.id]||{};
-      return {
-        id:r.id, date:r.date, items:r.items||[], subtotal:r.subtotal||0,
-        discount:r.discount||0, total:r.total||0, method:r.method||'Cash',
-        cashier:r.cashier||'', note:r.note||'', tendered:r.tendered||null,
-        mpesaRef:r.mpesa_ref||null, createdAt:r.created_at||r.date,
-        creditCustomerId:r.credit_customer_id||null,
-        voided:    r.voided===true || lv.voided===true,
-        voidReason:r.void_reason   || lv.voidReason  || null,
-        voidedBy:  r.voided_by     || lv.voidedBy    || null,
-        voidedAt:  r.voided_at     || lv.voidedAt    || null,
-      };
-    }));
+    _cacheCloudTxs(allTxs);   // merge (never overwrite) so older months stay in the cache
     if(prodData) lsSave(LS.products, products.map(r=>({
       id:r.id, name:r.name, category:r.category||'', price:r.price||0, cost:r.cost||0,
       stock:r.stock||0, lowStockAt:r.low_stock_at||5, unit:r.unit||'unit',
@@ -11313,6 +11299,50 @@ async function sbPullTransactions(){
   return true;
 }
 
+
+// ── Range-based transaction fetch (fixes "old months show blank") ──────────
+// The app used to fetch only the last 90 days and then OVERWRITE the local cache
+// with that slice, so any older month (e.g. May) showed no history.
+// This fetches exactly the requested date range, pages past Supabase's
+// 1000-row server cap, and MERGES into the local cache instead of replacing it.
+async function sbFetchTxRange(branchId, from, to){
+  const start = new Date(new Date(from+'T00:00:00').getTime() - 12*3600*1000).toISOString();
+  const end   = new Date(new Date(to+'T23:59:59').getTime()   + 12*3600*1000).toISOString();
+  const base  = '&date=gte.'+encodeURIComponent(start)+'&date=lte.'+encodeURIComponent(end)+'&order=date.desc';
+  const PAGE = 1000;
+  let all = [];
+  for(let page=0; page<60; page++){
+    const rows = await sbSafeFetch('transactions', branchId, base+'&offset='+(page*PAGE), PAGE);
+    if(rows===null) return page===0 ? null : all;
+    all = all.concat(rows);
+    if(rows.length<PAGE) break;
+  }
+  return all;
+}
+
+function _cacheCloudTxs(rows){
+  if(!rows||!rows.length) return;
+  const existing = ls(LS.transactions)||[];
+  const byId = {};
+  existing.forEach(t=>{ byId[t.id]=t; });
+  rows.forEach(r=>{
+    const lv = byId[r.id]||{};
+    byId[r.id] = {
+      id:r.id, date:r.date, items:r.items||[], subtotal:Number(r.subtotal)||0,
+      discount:Number(r.discount)||0, total:Number(r.total)||0, method:r.method||'Cash',
+      cashier:r.cashier||'', note:r.note||'', tendered:r.tendered||null,
+      mpesaRef:r.mpesa_ref||null, createdAt:r.created_at||r.date,
+      creditCustomerId:r.credit_customer_id||lv.creditCustomerId||null,
+      voided:    r.voided===true || lv.voided===true,
+      voidReason:r.void_reason || lv.voidReason || null,
+      voidedBy:  r.voided_by   || lv.voidedBy   || null,
+      voidedAt:  r.voided_at   || lv.voidedAt   || null,
+    };
+  });
+  const merged = Object.values(byId).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  lsSave(LS.transactions, merged);
+}
+
 async function sbPullCredits(){
   const branchId = APP.currentBranch?.id||'main';
   // Only pull active records — this ensures deleted (active=false) creditors stay gone
@@ -14027,7 +14057,24 @@ function _zDateQuick(range){
   renderZReport();
 }
 
-function renderZReport(){
+let _zrSeq=0;
+async function renderZReport(){
+  const f=document.getElementById('zRepFrom')?.value;
+  const t=document.getElementById('zRepTo')?.value;
+  if(sbReady() && f && t){
+    const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-85);
+    if(new Date(f+'T00:00:00')<cutoff){            // older than the 90-day cache
+      const my=++_zrSeq;
+      try{
+        const rows=await sbFetchTxRange(APP.currentBranch?.id||'main', f, t);
+        _cacheCloudTxs(rows);
+      }catch(e){ console.warn('Z-report cloud fetch failed',e); }
+      if(my!==_zrSeq) return;                       // a newer request superseded this one
+    }
+  }
+  _renderZReportCore();
+}
+function _renderZReportCore(){
   const el=document.getElementById('zReportContent');
   if(!el) return;
 
